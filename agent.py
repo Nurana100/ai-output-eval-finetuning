@@ -13,7 +13,7 @@ from google import genai
 
 load_dotenv()
 
-INDEX_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "index")
+INDEX_DIR = os.path.join(os.path.dirname(__file__), "index")
 
 _index = None
 _vectorizer = None
