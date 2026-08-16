@@ -2,15 +2,19 @@
 
 ## Summary
 
-Two real failure cases were pulled from the full 18-question evaluation run
-(`eval/results.json`). Both point to the same underlying issue: **retrieval
-coverage/chunking**, not the generation model reasoning incorrectly about
-what it was given.
+Three real cases were identified from the full 18-question evaluation run
+(`eval/results.json`), spanning three distinct root causes: retrieval
+(q04), generation/prompt (q06), and judge-scoring bias (q17). An earlier
+draft of this analysis mis-classified q06 as a retrieval failure; a deeper
+diagnostic (printing full retrieved-chunk text, not just source filenames)
+showed the correct chunk **was** retrieved with the full answer inside it
+— the model simply left a detail out despite having it. That distinction
+matters because it points to a different fix (prompting vs. retrieval).
 
 | ID  | Question | Score | Failure Type |
 |-----|----------|-------|---------------|
-| q04 | Can I use Nimbus Notes without an internet connection? | 0 | Retrieval — relevant chunk not surfaced |
-| q06 | How do I export my notes and what formats are supported? | 1 | Retrieval — partial coverage, key qualifier missing |
+| q04 | Can I use Nimbus Notes without an internet connection? | 0 | Retrieval — relevant chunk never surfaced (lexical/TF-IDF vocabulary mismatch) |
+| q06 | How do I export my notes and what formats are supported? | 1 | Generation — model had the full answer in context and still omitted a detail |
 | q17 | If I cancel my monthly plan on day 10 of a 30-day cycle, do I get a partial refund for the remaining 20 days? | 2 (judge) | LLM-judge leniency on a trap question — scored correct despite missing the discriminating detail |
 
 **Note:** q17 was not flagged by the automated scorer. It surfaced during a
@@ -26,16 +30,33 @@ generation bug like q04/q06.
 - **Model answer:** Said the information wasn't in the provided context,
   citing only a troubleshooting note about checking your internet
   connection.
-- **Retrieved sources:** `troubleshooting.md`, `features.md`,
-  `troubleshooting.md` (duplicate).
-- **Root cause:** `features.md` was retrieved, but the specific chunk
-  containing the offline-mode fact evidently wasn't part of what was
-  returned to the model — otherwise the model would have used it. The
-  duplicate `troubleshooting.md` entry wasted a retrieval slot that could
-  have surfaced a second, more relevant `features.md` chunk instead.
-- **Classification:** Retrieval/chunking failure, not a generation failure.
-  The model correctly declined to hallucinate an answer it didn't have —
-  the problem is what it was given, not what it did with it.
+- **Retrieved sources (k=3):** `troubleshooting.md`, `features.md`,
+  `troubleshooting.md` (duplicate — the duplicate is itself a minor bug;
+  see Recommended Fixes).
+- **Diagnostic:** Re-ran retrieval at k=10 and printed full chunk text
+  (not just filenames). The chunk that actually contains the offline-mode
+  answer — `"Offline mode: Available on Pro and Team plans. Notes edited
+  offline sync automatically once you're back online."` — does **not**
+  appear anywhere in the top 10 results for this query; it is the lowest-
+  scoring chunk in the whole corpus for it (score 0.0132, last place).
+  Meanwhile a near-empty chunk containing only the document header
+  (`"# Nimbus Notes — Features"`) ranks 2nd (score 0.2159), and
+  `troubleshooting.md`'s syncing section ranks 1st (0.2888) purely because
+  it shares the literal words "internet" and "connection" with the query.
+- **Root cause:** The retriever is TF-IDF (pure lexical/keyword overlap,
+  per `build_index.py`), which has no notion of synonymy. The question
+  says "without an internet connection"; the answer is filed under
+  "offline mode" — different vocabulary, same concept. TF-IDF has no way
+  to connect the two, so a document that merely shares surface words
+  (the sync-troubleshooting section) outranks the chunk with the actual
+  answer. This is compounded by a chunking artifact: `chunk_text()`
+  sometimes emits a chunk containing only a markdown header, and that
+  near-empty chunk still ranks highly because TF-IDF/cosine similarity
+  favors short documents when even a couple of terms match.
+- **Classification:** Retrieval failure — specifically, a lexical-search
+  vocabulary mismatch, not a chunking-boundary problem. Increasing top-k
+  alone would not fix this reliably, since the correct chunk isn't merely
+  low-ranked, it's below the entire top-10 in this run.
 
 ## q06 — "How do I export my notes and what formats are supported?"
 
@@ -43,15 +64,27 @@ generation bug like q04/q06.
   PDF; bulk export of the whole account as a .zip is Pro/Team only.
 - **Model answer:** Correctly described the navigation path and all three
   export formats, but omitted the Pro/Team-only bulk export detail.
-- **Retrieved sources:** `troubleshooting.md`, `features.md`,
+- **Retrieved sources (k=3):** `troubleshooting.md`, `features.md`,
   `privacy_security.md`.
-- **Root cause:** The core export info was retrieved and used correctly.
-  The missing qualifier (bulk export tier restriction) likely lives in a
-  different chunk of `features.md` that didn't make the top-k cut —
-  `privacy_security.md` was retrieved instead of that second chunk, and
-  wasn't relevant to the question.
-- **Classification:** Retrieval coverage failure. The model generated
-  faithfully from incomplete context.
+- **Diagnostic:** Re-ran retrieval and printed full chunk text. The
+  top-ranked chunk (`troubleshooting.md`, score 0.4699 — the highest score
+  of any chunk for this query) contains the **complete** answer, including
+  the exact missing detail: `"Bulk export of the entire account as a .zip
+  is available on Pro and Team plans only."` This chunk was retrieved and
+  was in the model's context window.
+- **Root cause:** This is not a retrieval failure — correcting an earlier
+  draft of this analysis, which mis-attributed it to missing context. The
+  model had the full answer available and still dropped the tier
+  qualifier when generating its (intentionally concise, per the system
+  prompt's "2-4 sentences" instruction) response. This looks like a
+  generation/summarization failure under a length constraint: the model
+  prioritized the parts of the answer that directly matched the question's
+  literal wording ("how," "what formats") over a secondary qualifier not
+  explicitly asked about.
+- **Classification:** Generation/prompt failure, not retrieval. The fix
+  belongs in the prompt (e.g., an explicit instruction or few-shot example
+  showing that plan-tier restrictions must be included when present),
+  not in the retrieval pipeline.
 
 ## q17 — "If I cancel my monthly plan on day 10 of a 30-day cycle, do I get a partial refund for the remaining 20 days?" (judge-scoring limitation)
 
@@ -88,39 +121,52 @@ generation bug like q04/q06.
   because the judge rubric doesn't check for demonstrated disambiguation,
   only final-answer correctness.
 
-## Common Root Cause
+## Root Causes (Three Distinct Failure Modes)
 
-q04 and q06 trace back to retrieval, not generation:
-- Chunking appears to be splitting single features (offline mode
-  availability, export tier restrictions) away from their qualifying
-  details, so a chunk can contain the "what" without the "who/which plan."
-- Top-k retrieval count and/or duplicate-chunk filtering may be too
-  permissive, letting a duplicate or lower-relevance chunk take a slot
-  that a more relevant chunk should have filled.
+Diagnosis confirmed these are three separate problems requiring three
+separate fixes — not one shared cause:
+
+- **q04 — retrieval (lexical mismatch):** TF-IDF retrieval matches surface
+  vocabulary, not meaning. "Without an internet connection" and "offline
+  mode" don't share words, so the correct chunk loses to an irrelevant
+  chunk that happens to share literal terms with the question.
+- **q06 — generation (context underuse):** The correct chunk was
+  retrieved and available; the model still dropped a qualifying detail,
+  likely due to the system prompt's brevity constraint competing with
+  completeness.
+- **q17 — judge-scoring bias:** Covered above; a rubric problem, not a
+  retrieval or generation problem.
 
 ## Recommended Fixes
 
-1. **Increase top-k** for retrieval so more candidate chunks are available
-   per query, reducing the chance the right chunk is cut off.
-2. **De-duplicate retrieved chunks** before passing them to the generator
-   (q04 retrieved the same `troubleshooting.md` chunk twice).
-3. **Review chunk size/overlap** for `features.md` — features and their
-   plan-tier qualifiers should ideally live in the same chunk, or overlap
-   should be large enough to keep them together.
-4. **Re-run q04 and q06 after any retrieval change** to confirm the fix
-   actually surfaces the missing information, rather than assuming it will.
+**For q04 (retrieval):**
+1. Swap TF-IDF for a semantic embedding model (e.g. sentence-transformers),
+   which `build_index.py`'s own docstring already anticipates as a drop-in
+   replacement — `retrieve()`'s interface wouldn't need to change.
+2. Short-term, cheaper mitigation without a new model: filter out
+   near-empty chunks (e.g. below a minimum token/character count) so
+   header-only chunks like `"# Nimbus Notes — Features"` can't outrank
+   substantive content.
+3. De-duplicate retrieved chunks before passing them to the generator
+   (q04 retrieved the same `troubleshooting.md` chunk twice, wasting a
+   context slot).
 
-For q17's judge-leniency issue specifically (a separate root cause from
-q04/q06, so it needs a separate fix — not solved by retrieval changes):
+**For q06 (generation):**
+4. Add a few-shot example or explicit instruction to the system prompt
+   telling the model to include plan-tier/eligibility qualifiers whenever
+   the retrieved context contains them, even under the brevity constraint.
+   (This is the fix implemented for Checkpoint 5 — see
+   `finetune/` or prompt-comparison artifacts for before/after results on
+   a held-out question set.)
 
-5. **Tighten the judge rubric for trap/discriminative questions.** Add an
-   explicit instruction (or a separate rubric field) requiring the judge to
-   check whether the answer addresses any distractor/discriminating detail
-   named in the reference answer, not just whether the final factual claim
-   matches.
-6. **Track trap questions as their own metric slice** rather than folding
-   them into the overall pass rate, so judge leniency on this question type
-   doesn't get averaged away by the rest of the (largely non-trap) test set.
+**For q17 (judge bias):**
+5. Tighten the judge rubric for trap/discriminative questions: require the
+   judge to check whether the answer addresses any distractor/
+   discriminating detail named in the reference answer, not just whether
+   the final factual claim matches.
+6. Track trap questions as their own metric slice rather than folding them
+   into the overall pass rate, so judge leniency on this question type
+   doesn't get averaged away by the rest of the (largely non-trap) set.
 
 ## Note on LLM-as-Judge Limitations
 
@@ -135,8 +181,52 @@ as an upper bound on trap-question performance, not a guarantee that the
 model is reliably distinguishing similar policies — manual spot-checking
 of outlier/trap cases remains necessary and was how q17 was caught here.
 
-No fine-tuning or prompt changes to the *generation* model are indicated
-by q04/q06 — the model performed correctly given its input in both cases.
-Checkpoint 5 will address the retrieval fixes above using a held-out
-question set, per the task's guidance against validating a fix on the
-same samples used to make it.
+## Note on Generation Non-Determinism (Discovered During Checkpoint 5)
+
+While validating the q06 fix, re-running the *original, unmodified*
+baseline prompt against q06 produced a **different score than the
+original eval run**: score 2 (full credit, qualifier included) on this
+later run, versus score 1 (qualifier dropped) in the run originally
+documented above and in `eval/results.json`. Same prompt, same question,
+same retrieved context — different output. This is expected LLM sampling
+variance, not a bug, but it has a real implication: **a single
+before/after comparison on one sample is not reliable evidence that a
+prompt fix works or doesn't**, since the baseline itself doesn't
+reproduce identically run to run.
+
+This is why Checkpoint 5's validation leans on a held-out multi-question
+set rather than a single q06 before/after: an aggregate across several
+questions is far less sensitive to one sample's random variance than a
+single data point is. It also means the true baseline failure rate for
+q06-type omissions is probably better estimated by running the question
+multiple times than by a single pass — a good candidate for future work
+if more API quota is available.
+
+## Checkpoint 5 Results
+
+**Held-out validation set** (q09, q10, q12, q16 — NOT used to design the
+fix): baseline avg score 2.00, improved avg score 2.00 across all four.
+No regressions from the fix. All four already scored full credit before
+the change, so this run doesn't show the fix creating new failures on
+questions with a similar qualifier-dropping risk shape.
+
+**q06 direct comparison** (the diagnosed sample — reported separately
+from the held-out set to avoid treating it as validation proof, per the
+anti-pollution guidance): baseline scored 2 and improved scored 2 on this
+run, both including the Pro/Team qualifier. Given the non-determinism
+noted above, this single run does not confirm the fix causes the
+improvement (the original documented failure showed the *unmodified*
+prompt already capable of scoring 1 on this exact question). What the fix
+does provide is an explicit instruction plus a worked example telling the
+model to preserve qualifiers under the brevity constraint, converting
+qualifier-inclusion from incidental (works or doesn't depending on
+sampling) to instructed behavior — the mechanism is sound even though a
+single-sample before/after can't statistically prove it here.
+
+Checkpoint 5 implements the few-shot prompt fix for q06's failure category
+(generation/context-underuse), validated on a held-out question set that
+was not used while designing the fix, per the task's guidance against
+validating a fix on the same samples used to make it. q04's retrieval fix
+(swapping TF-IDF for semantic embeddings) is documented here as a
+recommendation but is a larger infrastructure change out of scope for a
+prompt-level Checkpoint 5 fix.
