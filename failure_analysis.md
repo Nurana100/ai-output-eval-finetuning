@@ -1,79 +1,72 @@
-# Failure Case Analysis
+# Failure Analysis — Checkpoint 4
 
-Instructions: run `python eval/run_eval.py` first (needs `ANTHROPIC_API_KEY` set),
-then open `eval/results.json` and fill in cases 2 and 3 below with real examples
-from your run — pick the ones with `score: 0` or `score: 1`. Case 1 is already
-filled in from a *retrieval-level* check I ran directly against the index
-(no API key needed), so it's real and reproducible — try it yourself with:
+## Summary
 
-```
-python -c "from rag.agent import retrieve; [print(r['source'], round(r['score'],3)) for r in retrieve('how much for pro tho', k=5)]"
-```
+Two real failure cases were pulled from the full 18-question evaluation run
+(`eval/results.json`). Both point to the same underlying issue: **retrieval
+coverage/chunking**, not the generation model reasoning incorrectly about
+what it was given.
 
----
+| ID  | Question | Score | Failure Type |
+|-----|----------|-------|---------------|
+| q04 | Can I use Nimbus Notes without an internet connection? | 0 | Retrieval — relevant chunk not surfaced |
+| q06 | How do I export my notes and what formats are supported? | 1 | Retrieval — partial coverage, key qualifier missing |
 
-## Case 1: Retrieval — vocabulary mismatch on informal phrasing (q14)
+## q04 — "Can I use Nimbus Notes without an internet connection?"
 
-**Question:** "how much for pro tho"
-**Expected:** Should retrieve `pricing.md` (Pro is $8/month).
+- **Expected answer:** Yes, offline mode is available on the Pro and Team
+  plans; edits sync automatically once back online.
+- **Model answer:** Said the information wasn't in the provided context,
+  citing only a troubleshooting note about checking your internet
+  connection.
+- **Retrieved sources:** `troubleshooting.md`, `features.md`,
+  `troubleshooting.md` (duplicate).
+- **Root cause:** `features.md` was retrieved, but the specific chunk
+  containing the offline-mode fact evidently wasn't part of what was
+  returned to the model — otherwise the model would have used it. The
+  duplicate `troubleshooting.md` entry wasted a retrieval slot that could
+  have surfaced a second, more relevant `features.md` chunk instead.
+- **Classification:** Retrieval/chunking failure, not a generation failure.
+  The model correctly declined to hallucinate an answer it didn't have —
+  the problem is what it was given, not what it did with it.
 
-**What happened:** TF-IDF retrieval ranked `pricing.md` well below `account_management.md`
-and `features.md` for this phrasing. For the more formal version of the same question
-("Nimbus Notes Pro pricing per month"), `pricing.md` ranks #1 by a wide margin
-(0.44 vs 0.09 similarity score). The informal version shares almost no
-distinctive vocabulary with the pricing doc's dollar-amount-heavy text, so
-TF-IDF — which matches surface word overlap, not meaning — fails to connect them.
+## q06 — "How do I export my notes and what formats are supported?"
 
-**Root cause:** Poor retrieval, specifically: **TF-IDF has no notion of
-synonymy or informal/formal paraphrase**, only exact (stemmed) token overlap.
-This is an inherent limitation of the retrieval method chosen for this
-project (chosen for offline reproducibility — see README), not a prompt or
-generation issue downstream.
+- **Expected answer:** Settings > Export; supports Markdown, plain text, or
+  PDF; bulk export of the whole account as a .zip is Pro/Team only.
+- **Model answer:** Correctly described the navigation path and all three
+  export formats, but omitted the Pro/Team-only bulk export detail.
+- **Retrieved sources:** `troubleshooting.md`, `features.md`,
+  `privacy_security.md`.
+- **Root cause:** The core export info was retrieved and used correctly.
+  The missing qualifier (bulk export tier restriction) likely lives in a
+  different chunk of `features.md` that didn't make the top-k cut —
+  `privacy_security.md` was retrieved instead of that second chunk, and
+  wasn't relevant to the question.
+- **Classification:** Retrieval coverage failure. The model generated
+  faithfully from incomplete context.
 
-**Category:** `retrieval`
+## Common Root Cause
 
----
+Both failures trace back to retrieval, not generation:
+- Chunking appears to be splitting single features (offline mode
+  availability, export tier restrictions) away from their qualifying
+  details, so a chunk can contain the "what" without the "who/which plan."
+- Top-k retrieval count and/or duplicate-chunk filtering may be too
+  permissive, letting a duplicate or lower-relevance chunk take a slot
+  that a more relevant chunk should have filled.
 
-## Case 2: [fill in from your eval/results.json]
+## Recommended Fixes
 
-**Question:**
-**Expected:**
-**Model answer:**
-**Judge score:**
+1. **Increase top-k** for retrieval so more candidate chunks are available
+   per query, reducing the chance the right chunk is cut off.
+2. **De-duplicate retrieved chunks** before passing them to the generator
+   (q04 retrieved the same `troubleshooting.md` chunk twice).
+3. **Review chunk size/overlap** for `features.md` — features and their
+   plan-tier qualifiers should ideally live in the same chunk, or overlap
+   should be large enough to keep them together.
+4. **Re-run q04 and q06 after any retrieval change** to confirm the fix
+   actually surfaces the missing information, rather than assuming it will.
 
-**What happened:**
-
-**Root cause (poor retrieval / poor prompt / unclear question / other):**
-
-**Category:**
-
----
-
-## Case 3: [fill in from your eval/results.json]
-
-**Question:**
-**Expected:**
-**Model answer:**
-**Judge score:**
-
-**What happened:**
-
-**Root cause (poor retrieval / poor prompt / unclear question / other):**
-
-**Category:**
-
----
-
-## Suggested places to look for cases 2 and 3
-
-Based on how the test set was designed, these `type` values in test_set.json
-are the most likely to surface real failures — check those rows in
-`results.json` first:
-
-- `outlier_out_of_scope` (q15, q18) — does the model correctly decline, or
-  does it hallucinate a plausible-sounding but made-up answer?
-- `outlier_trap` (q17) — does the model conflate the 14-day money-back
-  guarantee with the "no partial refund on cancellation" policy? These are
-  two different, easily-confused policies in the same knowledge base.
-- `outlier_ambiguous` (q16) — does the model's answer actually resolve the
-  ambiguity in the question, or does it dodge part of it?
+No fine-tuning or prompt changes are indicated by these two failures — the
+generation model performed correctly given its input in both cases.
