@@ -1,0 +1,7 @@
+.env
+__pycache__/
+*.pyc
+data/index/
+finetune/flan-t5-nimbus/
+finetune/train_data.jsonl
+.ipynb_checkpoints/

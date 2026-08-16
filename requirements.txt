@@ -1,0 +1,10 @@
+anthropic>=0.40.0
+python-dotenv>=1.0.0
+scikit-learn>=1.4.0
+faiss-cpu>=1.8.0
+numpy>=1.26.0
+
+# only needed for finetune/train.py, run in Colab (see finetune/train.py header)
+transformers>=4.44.0
+datasets>=2.20.0
+accelerate>=0.33.0
