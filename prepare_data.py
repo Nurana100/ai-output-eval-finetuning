@@ -14,10 +14,8 @@ test-set pollution (see report.md).
 """
 import json
 import os
-import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from rag.agent import retrieve  # noqa: E402
+from agent import retrieve
 
 DECLINE_TEXT = "I don't have information about that in what I know about Nimbus Notes."
 

@@ -5,7 +5,7 @@ and metrics.json.
 
 Usage:
     export GEMINI_API_KEY=...   # or put it in a .env file
-    python eval/run_eval.py
+    python run_eval.py
 
 Note: the free tier of the Gemini API is rate-limited (as of writing,
 gemini-3.5-flash-lite allows 15 requests/minute). Each question makes 2
@@ -20,10 +20,9 @@ import time
 from google import genai
 from google.genai import errors as genai_errors
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from rag.agent import answer as rag_answer  # noqa: E402
-from eval.scoring import judge  # noqa: E402
-from eval.metrics import compute_metrics  # noqa: E402
+from agent import answer as rag_answer
+from scoring import judge
+from metrics import compute_metrics
 
 TEST_SET_PATH = os.path.join(os.path.dirname(__file__), "test_set.json")
 RESULTS_PATH = os.path.join(os.path.dirname(__file__), "results.json")

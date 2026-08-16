@@ -5,21 +5,18 @@ quota re-doing the held-out validation, which already succeeded.
 """
 import json
 import os
-import sys
 import time
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from dotenv import load_dotenv
 from google import genai
 
-from rag.agent import retrieve, SYSTEM_PROMPT as BASELINE_PROMPT
-from finetune.prompt_v2 import FEWSHOT_SYSTEM_PROMPT
-from eval.scoring import judge
+from agent import retrieve, SYSTEM_PROMPT as BASELINE_PROMPT
+from prompt_v2 import FEWSHOT_SYSTEM_PROMPT
+from scoring import judge
 
 load_dotenv()
 
-TEST_SET_PATH = os.path.join(os.path.dirname(__file__), "..", "eval", "test_set.json")
+TEST_SET_PATH = os.path.join(os.path.dirname(__file__), "test_set.json")
 
 
 def generate(question, context, system_template, gemini_client, model="gemini-3.5-flash-lite"):
