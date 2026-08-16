@@ -1,4 +1,4 @@
-from rag.agent import retrieve
+from agent import retrieve
 
 results = retrieve("Can I use Nimbus Notes without an internet connection?", k=10)
 for r in results:

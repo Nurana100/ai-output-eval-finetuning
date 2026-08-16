@@ -1,4 +1,4 @@
-from rag.agent import retrieve
+from agent import retrieve
 
 for q in [
     "Can I use Nimbus Notes without an internet connection?",
