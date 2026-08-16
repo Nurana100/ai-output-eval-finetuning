@@ -39,7 +39,7 @@ prepare_data.py, train.py, train_data.jsonl   an earlier fine-tuning approach
 
 ```bash
 pip install -r requirements.txt
-cp env.example .env
+cp .env.example .env
 # edit .env and put your real GEMINI_API_KEY in there
 ```
 
