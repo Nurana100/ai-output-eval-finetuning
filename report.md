@@ -11,7 +11,7 @@ with a before/after comparison.
 
 ### 2.1 Test Set
 
-18 question/expected-answer pairs (`eval/test_set.json`), covering all 5
+18 question/expected-answer pairs (`test_set.json`), covering all 5
 knowledge-base documents:
 - 13 normal questions, one or more per document (pricing, features,
   troubleshooting, account management, privacy/security).
@@ -21,14 +21,14 @@ knowledge-base documents:
 
 ### 2.2 System Under Test
 
-The RAG agent (`rag/agent.py`) retrieves context with a TF-IDF + FAISS
-index (`rag/build_index.py`) over the knowledge base, then generates an
+The RAG agent (`agent.py`) retrieves context with a TF-IDF + FAISS
+index (`build_index.py`) over the knowledge base, then generates an
 answer with `gemini-3.5-flash-lite`, constrained to a 2-4 sentence,
 context-only response.
 
 ### 2.3 Scoring
 
-An LLM-as-judge (`eval/scoring.py`, also `gemini-3.5-flash-lite`) scores
+An LLM-as-judge (`scoring.py`, also `gemini-3.5-flash-lite`) scores
 each answer 0-2 against the reference answer:
 - 2 = correct, all key facts present, nothing contradicted
 - 1 = partially correct, missing details or a minor inaccuracy
@@ -37,9 +37,9 @@ each answer 0-2 against the reference answer:
 
 ### 2.4 Metrics
 
-`eval/run_eval.py` runs the full suite and reports pass rate (strict:
+`run_eval.py` runs the full suite and reports pass rate (strict:
 score==2, lenient: score>=1), average latency, and average token cost
-(`eval/metrics.py`), using current published pricing for
+(`metrics.py`), using current published pricing for
 `gemini-3.5-flash-lite`.
 
 ## 3. Results
@@ -57,7 +57,7 @@ score==2, lenient: score>=1), average latency, and average token cost
 
 Manual review of the full result set (not just the automated pass/fail
 flags) surfaced three distinct failure cases, each with a different root
-cause — full detail in `eval/failure_analysis.md`:
+cause — full detail in `failure_analysis.md`:
 
 | ID | Question | Score | Root Cause |
 |---|---|---|---|
@@ -68,17 +68,17 @@ cause — full detail in `eval/failure_analysis.md`:
 An earlier draft of this analysis initially mis-classified q06 as a
 retrieval failure; a deeper diagnostic (printing full retrieved-chunk
 text rather than just source filenames) corrected this. That correction
-is documented in `eval/failure_analysis.md` for transparency.
+is documented in `failure_analysis.md` for transparency.
 
 ### 3.3 Fix and Validation (Checkpoint 5)
 
-**Fix:** A few-shot prompt (`finetune/prompt_v2.py`) targeting the q06
+**Fix:** A few-shot prompt (`prompt_v2.py`) targeting the q06
 failure category (generation dropping qualifiers under a brevity
 constraint). Adds an explicit instruction plus one worked example showing
 that plan-tier/limit/exception qualifiers must be preserved even in a
 short answer.
 
-**Held-out validation** (`finetune/compare_prompts.py`): to avoid
+**Held-out validation** (`compare_prompts.py`): to avoid
 cyclical validation (testing a fix on the same sample used to design it),
 the fix was scored against four questions *not* used during development —
 q09, q10, q12, q16 — chosen because their reference answers also contain
@@ -94,7 +94,7 @@ credit before the change, so this run demonstrates the fix is safe
 (doesn't break already-correct behavior) rather than demonstrating a
 score improvement on this particular set.
 
-**Direct q06 comparison** (`finetune/run_q06_demo.py`, reported
+**Direct q06 comparison** (`run_q06_demo.py`, reported
 separately from the held-out set since q06 was the diagnosed sample, not
 a validation sample): both baseline and improved prompts scored 2 on this
 run. This surfaced an important limitation — **LLM generation
@@ -104,7 +104,7 @@ qualifier) and 2 on this later run (including it), with no code changes
 between the two. A single before/after sample is therefore not reliable
 evidence a fix works or doesn't; the held-out multi-question aggregate
 is the more trustworthy signal. Full detail and reasoning in
-`eval/failure_analysis.md`.
+`failure_analysis.md`.
 
 ## 4. Known Limitations
 
@@ -127,18 +127,18 @@ is the more trustworthy signal. Full detail and reasoning in
   semantic matching) was diagnosed but not fixed in this task — the fix
   (swapping to a semantic embedding model) is a larger infrastructure
   change out of scope for a prompt-level checkpoint. It's documented as a
-  recommendation in `eval/failure_analysis.md`.
+  recommendation in `failure_analysis.md`.
 
 ## 5. Files
 
-- `eval/test_set.json` — test set (Checkpoint 1)
-- `eval/scoring.py` — LLM-as-judge (Checkpoint 2)
-- `eval/run_eval.py`, `eval/metrics.py` — eval runner and metrics
+- `test_set.json` — test set (Checkpoint 1)
+- `scoring.py` — LLM-as-judge (Checkpoint 2)
+- `run_eval.py`, `metrics.py` — eval runner and metrics
   (Checkpoint 3)
-- `eval/results.json`, `eval/metrics.json` — raw results
-- `eval/failure_analysis.md` — root-cause analysis (Checkpoint 4)
-- `finetune/prompt_v2.py` — improved prompt (Checkpoint 5)
-- `finetune/compare_prompts.py`, `finetune/run_q06_demo.py` — before/after
+- `results.json`, `metrics.json` — raw results
+- `failure_analysis.md` — root-cause analysis (Checkpoint 4)
+- `prompt_v2.py` — improved prompt (Checkpoint 5)
+- `compare_prompts.py`, `run_q06_demo.py` — before/after
   validation scripts
-- `finetune/prompt_comparison_results.json`,
-  `finetune/q06_demonstration.json` — before/after results
+- `prompt_comparison_results.json`,
+  `q06_demonstration.json` — before/after results
