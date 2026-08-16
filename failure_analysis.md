@@ -11,6 +11,13 @@ what it was given.
 |-----|----------|-------|---------------|
 | q04 | Can I use Nimbus Notes without an internet connection? | 0 | Retrieval — relevant chunk not surfaced |
 | q06 | How do I export my notes and what formats are supported? | 1 | Retrieval — partial coverage, key qualifier missing |
+| q17 | If I cancel my monthly plan on day 10 of a 30-day cycle, do I get a partial refund for the remaining 20 days? | 2 (judge) | LLM-judge leniency on a trap question — scored correct despite missing the discriminating detail |
+
+**Note:** q17 was not flagged by the automated scorer. It surfaced during a
+manual review of outlier/trap questions specifically because the task's
+Quality Checks call out LLM-as-judge bias as a known limitation to watch
+for — this case is a concrete example of that bias, not a retrieval or
+generation bug like q04/q06.
 
 ## q04 — "Can I use Nimbus Notes without an internet connection?"
 
@@ -46,9 +53,44 @@ what it was given.
 - **Classification:** Retrieval coverage failure. The model generated
   faithfully from incomplete context.
 
+## q17 — "If I cancel my monthly plan on day 10 of a 30-day cycle, do I get a partial refund for the remaining 20 days?" (judge-scoring limitation)
+
+- **Type:** `outlier_trap` — this question was deliberately written to test
+  whether the model conflates two similar-sounding policies: (a) no partial
+  refund on mid-cycle cancellation, and (b) the 14-day money-back guarantee
+  on *new* subscriptions.
+- **Expected answer:** States there's no partial refund, the plan stays
+  active until the end of the billing period, and explicitly distinguishes
+  this from the unrelated 14-day money-back guarantee.
+- **Model answer:** "No, you do not get a partial refund for the unused
+  portion of a monthly plan. Your plan will simply remain active until the
+  end of the current billing period." — factually correct, but never
+  mentions the 14-day guarantee or shows it recognized the trap at all.
+- **Judge score:** 2/2. **Judge justification:** the answer "correctly
+  states that there is no partial refund and the plan remains active until
+  the end of the billing period."
+- **Root cause:** This is not a retrieval or generation bug — the model's
+  answer is factually accurate. It's a **judge-scoring limitation**: the
+  automated LLM-as-judge evaluates surface correctness against the
+  reference answer's factual claims, but doesn't penalize the omission of
+  the reasoning step that would prove the model actually resolved the
+  trap (versus just not tripping it by chance). A model that silently
+  ignores the distractor policy and a model that actively reasons through
+  it and rejects it look identical to this judge.
+- **Classification:** LLM-as-judge bias/leniency, specifically on trap
+  questions designed to test discriminative reasoning rather than plain
+  factual recall. This matches the known judge-bias limitation called out
+  in the task's Quality Checks (judges tend to reward answers that hit the
+  key facts, independent of whether the answer demonstrates the reasoning
+  those facts were meant to test).
+- **Implication:** Aggregate pass-rate metrics (Checkpoint 3) may be
+  slightly optimistic on trap/discriminative questions specifically,
+  because the judge rubric doesn't check for demonstrated disambiguation,
+  only final-answer correctness.
+
 ## Common Root Cause
 
-Both failures trace back to retrieval, not generation:
+q04 and q06 trace back to retrieval, not generation:
 - Chunking appears to be splitting single features (offline mode
   availability, export tier restrictions) away from their qualifying
   details, so a chunk can contain the "what" without the "who/which plan."
@@ -68,5 +110,33 @@ Both failures trace back to retrieval, not generation:
 4. **Re-run q04 and q06 after any retrieval change** to confirm the fix
    actually surfaces the missing information, rather than assuming it will.
 
-No fine-tuning or prompt changes are indicated by these two failures — the
-generation model performed correctly given its input in both cases.
+For q17's judge-leniency issue specifically (a separate root cause from
+q04/q06, so it needs a separate fix — not solved by retrieval changes):
+
+5. **Tighten the judge rubric for trap/discriminative questions.** Add an
+   explicit instruction (or a separate rubric field) requiring the judge to
+   check whether the answer addresses any distractor/discriminating detail
+   named in the reference answer, not just whether the final factual claim
+   matches.
+6. **Track trap questions as their own metric slice** rather than folding
+   them into the overall pass rate, so judge leniency on this question type
+   doesn't get averaged away by the rest of the (largely non-trap) test set.
+
+## Note on LLM-as-Judge Limitations
+
+As called out in this task's Quality Checks, an LLM-as-judge has known
+biases (e.g., leniency, preference for longer or more confident-sounding
+answers). q17 is a concrete instance of this: the judge scored a factually
+correct but reasoning-incomplete answer as fully correct (2/2) because its
+rubric only checks final-answer correctness, not whether the answer
+demonstrates it resolved the specific ambiguity the question was designed
+to test. This means the aggregate metrics in Checkpoint 3 should be read
+as an upper bound on trap-question performance, not a guarantee that the
+model is reliably distinguishing similar policies — manual spot-checking
+of outlier/trap cases remains necessary and was how q17 was caught here.
+
+No fine-tuning or prompt changes to the *generation* model are indicated
+by q04/q06 — the model performed correctly given its input in both cases.
+Checkpoint 5 will address the retrieval fixes above using a held-out
+question set, per the task's guidance against validating a fix on the
+same samples used to make it.
