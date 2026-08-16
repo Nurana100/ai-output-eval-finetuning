@@ -25,7 +25,7 @@ Respond ONLY with JSON in this exact format, no other text:
 """
 
 
-def judge(question, expected_answer, model_answer, client, model="claude-sonnet-4-6"):
+def judge(question, expected_answer, model_answer, client, model="gemini-3.5-flash-lite"):
     user_prompt = f"""Question: {question}
 
 Reference answer: {expected_answer}
@@ -34,18 +34,23 @@ Assistant's answer: {model_answer}
 
 Score the assistant's answer."""
 
-    response = client.messages.create(
+    response = client.models.generate_content(
         model=model,
-        max_tokens=200,
-        system=JUDGE_SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": user_prompt}],
+        contents=user_prompt,
+        config={
+            "system_instruction": JUDGE_SYSTEM_PROMPT,
+            "max_output_tokens": 200,
+        },
     )
-    raw = "".join(b.text for b in response.content if b.type == "text").strip()
+    raw = (response.text or "").strip()
+    # Gemini sometimes wraps JSON in ```json fences despite instructions -- strip them
+    raw = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError:
         # judge didn't follow format -- fail safe rather than crash the eval run
         parsed = {"score": None, "justification": f"UNPARSEABLE JUDGE OUTPUT: {raw}"}
-    parsed["judge_input_tokens"] = response.usage.input_tokens
-    parsed["judge_output_tokens"] = response.usage.output_tokens
+    usage = response.usage_metadata
+    parsed["judge_input_tokens"] = usage.prompt_token_count if usage else 0
+    parsed["judge_output_tokens"] = usage.candidates_token_count if usage else 0
     return parsed

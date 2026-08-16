@@ -4,14 +4,21 @@ RAG agent, scores the answer with the LLM judge, and writes results.json
 and metrics.json.
 
 Usage:
-    export ANTHROPIC_API_KEY=sk-ant-...   # or put it in a .env file
+    export GEMINI_API_KEY=...   # or put it in a .env file
     python eval/run_eval.py
+
+Note: the free tier of the Gemini API is rate-limited (as of writing,
+gemini-3.5-flash-lite allows 15 requests/minute). Each question makes 2
+calls (agent answer + judge), so this script paces itself and retries
+automatically on 429 (rate limit) errors rather than crashing.
 """
 import json
 import os
 import sys
+import time
 
-import anthropic
+from google import genai
+from google.genai import errors as genai_errors
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from rag.agent import answer as rag_answer  # noqa: E402
@@ -22,21 +29,40 @@ TEST_SET_PATH = os.path.join(os.path.dirname(__file__), "test_set.json")
 RESULTS_PATH = os.path.join(os.path.dirname(__file__), "results.json")
 METRICS_PATH = os.path.join(os.path.dirname(__file__), "metrics.json")
 
+SECONDS_BETWEEN_CALLS = 5  # paces us to ~12 requests/minute, under the 15/min free-tier cap
+MAX_RETRIES = 5
+
+
+def call_with_retry(fn, *args, **kwargs):
+    for attempt in range(MAX_RETRIES):
+        try:
+            return fn(*args, **kwargs)
+        except genai_errors.ClientError as e:
+            if getattr(e, "code", None) == 429 and attempt < MAX_RETRIES - 1:
+                wait = 15 * (attempt + 1)
+                print(f"    rate limited, waiting {wait}s before retry...")
+                time.sleep(wait)
+            else:
+                raise
+
 
 def main():
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        print("ERROR: set ANTHROPIC_API_KEY (env var or .env file) before running.")
+    if not os.environ.get("GEMINI_API_KEY"):
+        print("ERROR: set GEMINI_API_KEY (env var or .env file) before running.")
         sys.exit(1)
 
-    client = anthropic.Anthropic()
+    client = genai.Client()
 
     with open(TEST_SET_PATH) as f:
         test_set = json.load(f)
 
     records = []
     for item in test_set:
-        result = rag_answer(item["question"], client=client)
-        judgement = judge(item["question"], item["expected_answer"], result["answer"], client=client)
+        result = call_with_retry(rag_answer, item["question"], client=client)
+        time.sleep(SECONDS_BETWEEN_CALLS)
+        judgement = call_with_retry(
+            judge, item["question"], item["expected_answer"], result["answer"], client=client
+        )
 
         record = {
             "id": item["id"],
@@ -56,8 +82,11 @@ def main():
         records.append(record)
         print(f"[{item['id']}] score={judgement['score']}  {item['question'][:60]}")
 
-    with open(RESULTS_PATH, "w") as f:
-        json.dump(records, f, indent=2)
+        # save progress after every question so a crash doesn't lose completed work
+        with open(RESULTS_PATH, "w") as f:
+            json.dump(records, f, indent=2)
+
+        time.sleep(SECONDS_BETWEEN_CALLS)
 
     metrics = compute_metrics(records)
     with open(METRICS_PATH, "w") as f:

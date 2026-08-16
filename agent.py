@@ -1,6 +1,6 @@
 """
 The RAG agent under test: retrieves relevant chunks with the TF-IDF/FAISS
-index, then asks Claude to answer using only the retrieved context.
+index, then asks Gemini to answer using only the retrieved context.
 """
 import os
 import pickle
@@ -9,6 +9,7 @@ import time
 import faiss
 import numpy as np
 from dotenv import load_dotenv
+from google import genai
 
 load_dotenv()
 
@@ -54,11 +55,11 @@ Context:
 """
 
 
-def answer(question, k=3, model="claude-sonnet-4-6", client=None):
+def answer(question, k=3, model="gemini-3.5-flash-lite", client=None):
     """Runs one RAG query end-to-end. Returns dict with answer, latency,
     token usage, and the retrieved chunks (for failure analysis).
 
-    `client` is an anthropic.Anthropic() instance, passed in so callers
+    `client` is a google.genai.Client() instance, passed in so callers
     (eval scripts) can reuse one client and so this module has no hard
     dependency on an API key being present at import time.
     """
@@ -66,15 +67,18 @@ def answer(question, k=3, model="claude-sonnet-4-6", client=None):
     context = "\n\n---\n\n".join(f"[{r['source']}]\n{r['text']}" for r in retrieved)
 
     start = time.time()
-    response = client.messages.create(
+    response = client.models.generate_content(
         model=model,
-        max_tokens=300,
-        system=SYSTEM_PROMPT.format(context=context),
-        messages=[{"role": "user", "content": question}],
+        contents=question,
+        config={
+            "system_instruction": SYSTEM_PROMPT.format(context=context),
+            "max_output_tokens": 300,
+        },
     )
     latency = time.time() - start
 
-    answer_text = "".join(b.text for b in response.content if b.type == "text")
+    answer_text = response.text or ""
+    usage = response.usage_metadata
 
     return {
         "question": question,
@@ -82,6 +86,6 @@ def answer(question, k=3, model="claude-sonnet-4-6", client=None):
         "retrieved_sources": [r["source"] for r in retrieved],
         "retrieved_chunks": retrieved,
         "latency_seconds": latency,
-        "input_tokens": response.usage.input_tokens,
-        "output_tokens": response.usage.output_tokens,
+        "input_tokens": usage.prompt_token_count if usage else 0,
+        "output_tokens": usage.candidates_token_count if usage else 0,
     }

@@ -3,6 +3,7 @@
 A small RAG support agent (fictional product "Nimbus Notes") plus a full
 evaluation framework: test set, LLM-as-judge scoring, metrics, failure
 analysis, and a fine-tune that corrects one identified failure category.
+Generation and judging use the Gemini API (free tier).
 
 ## What's in here
 
@@ -24,10 +25,11 @@ finetune/                fine-tunes flan-t5-small to fix one failure category (r
 ```bash
 pip install -r requirements.txt
 cp .env.example .env
-# edit .env and put your real ANTHROPIC_API_KEY in there
+# edit .env and put your real GEMINI_API_KEY in there
 ```
 
-Get a key at https://console.anthropic.com/settings/keys if you don't have one.
+Get a free key at https://aistudio.google.com/apikey if you don't have one
+(no credit card required for the free tier).
 
 **Do not paste your API key anywhere except your local `.env` file.** It's
 in `.gitignore` so it won't get committed.

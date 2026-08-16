@@ -1,9 +1,13 @@
 """Aggregate metrics from a list of per-question result records."""
 
-# Rough Claude Sonnet pricing used only for a ballpark cost estimate.
-# Check current pricing at anthropic.com/pricing before trusting this for real budgeting.
-PRICE_PER_MTOK_INPUT = 3.00
-PRICE_PER_MTOK_OUTPUT = 15.00
+# gemini-3.5-flash-lite standard paid-tier pricing (as of Aug 2026).
+# This estimate shows what the run WOULD cost on the paid tier -- if you
+# ran this on the free tier (as recommended in the README), your actual
+# dollar cost was $0; this number exists so "average token cost" is a
+# meaningful monitored metric regardless of which tier you're on.
+# Check ai.google.dev/gemini-api/docs/pricing before trusting this for real budgeting.
+PRICE_PER_MTOK_INPUT = 0.30
+PRICE_PER_MTOK_OUTPUT = 2.50
 
 
 def estimate_cost(input_tokens, output_tokens):
