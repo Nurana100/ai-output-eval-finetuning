@@ -1,59 +1,144 @@
-# Evaluation Report: Nimbus Notes RAG Support Agent
+# Evaluation Report — Nimbus Notes RAG Agent
 
-## 1. What was evaluated
-A RAG support agent that answers questions about a fictional product
-("Nimbus Notes") using a 5-document knowledge base (pricing, features,
-troubleshooting, privacy/security, account management). Retrieval uses
-TF-IDF + FAISS; generation and judging use the Claude API.
+## 1. Objective
+
+Build a framework to test and evaluate the Nimbus Notes RAG support agent
+against a curated test set, identify real failure cases with root-cause
+analysis, and apply a targeted fix to one identified failure category
+with a before/after comparison.
 
 ## 2. Methodology
-- **Test set:** 18 question/expected-answer pairs (`eval/test_set.json`) —
-  13 "normal" questions covering each knowledge base doc, plus 5 outliers:
-  an informally-phrased paraphrase, two out-of-scope questions, one
-  deliberately ambiguous question, and one "trap" question designed to
-  make the model conflate two similar-but-different policies.
-- **Scoring:** LLM-as-judge (`eval/scoring.py`), 0/1/2 scale (incorrect /
-  partially correct / correct), judge model: Claude, given the question,
-  the reference answer, and the model's answer.
-- **Test-set isolation:** the fine-tuning data (`finetune/train_data.jsonl`)
-  uses a *different* set of questions from `eval/test_set.json`, so the
-  before/after comparison in Checkpoint 5 isn't validated against the same
-  examples it was tuned on.
+
+### 2.1 Test Set
+
+18 question/expected-answer pairs (`eval/test_set.json`), covering all 5
+knowledge-base documents:
+- 13 normal questions, one or more per document (pricing, features,
+  troubleshooting, account management, privacy/security).
+- 5 outliers: an informally-phrased paraphrase (q14), two out-of-scope
+  questions (q15, q18), one deliberately ambiguous question (q16), and
+  one trap question conflating two similar policies (q17).
+
+### 2.2 System Under Test
+
+The RAG agent (`rag/agent.py`) retrieves context with a TF-IDF + FAISS
+index (`rag/build_index.py`) over the knowledge base, then generates an
+answer with `gemini-3.5-flash-lite`, constrained to a 2-4 sentence,
+context-only response.
+
+### 2.3 Scoring
+
+An LLM-as-judge (`eval/scoring.py`, also `gemini-3.5-flash-lite`) scores
+each answer 0-2 against the reference answer:
+- 2 = correct, all key facts present, nothing contradicted
+- 1 = partially correct, missing details or a minor inaccuracy
+- 0 = incorrect, contradicts the reference, hallucinates, or
+  wrongly answers/declines relative to what the reference expects
+
+### 2.4 Metrics
+
+`eval/run_eval.py` runs the full suite and reports pass rate (strict:
+score==2, lenient: score>=1), average latency, and average token cost
+(`eval/metrics.py`), using current published pricing for
+`gemini-3.5-flash-lite`.
 
 ## 3. Results
 
-_Fill in from `eval/metrics.json` after running `python eval/run_eval.py`:_
+### 3.1 Aggregate Metrics (Checkpoint 3)
 
 | Metric | Value |
 |---|---|
-| Pass rate (strict, score==2) | |
-| Pass rate (lenient, score>=1) | |
-| Avg latency / question | |
-| Total estimated cost | |
+| Pass rate (strict, score==2) | 0.889 |
+| Pass rate (lenient, score>=1) | 0.944 |
+| Avg latency | 0.983s / question |
+| Avg cost | $0.00036 / question ($0.0065 total, 18 questions) |
 
-## 4. Known limitations of this evaluation
+### 3.2 Failure Analysis (Checkpoint 4)
 
-- **LLM-as-judge bias:** the judge may favor longer or more verbose
-  answers, or answers stylistically similar to how it would write itself,
-  independent of factual correctness (see `eval/scoring.py` docstring).
-  We used a strict 0/1/2 rubric with required justification rather than
-  open-ended scoring to reduce this, and manually spot-checked
-  [N] of the judge's scores by hand — [state your agreement rate here].
-- **Retrieval method:** TF-IDF was chosen over neural embeddings so the
-  whole pipeline runs offline/reproducibly, but it's weak on paraphrase
-  and synonyms (see Failure Case 1) — a denser embedding model would
-  likely improve pass rate but wasn't in scope for this evaluation.
-- **Test set size:** 18 questions is enough to surface failure categories,
-  not enough to give statistically tight pass-rate estimates.
+Manual review of the full result set (not just the automated pass/fail
+flags) surfaced three distinct failure cases, each with a different root
+cause — full detail in `eval/failure_analysis.md`:
 
-## 5. Failure categories identified
-See `eval/failure_analysis.md` for full detail. Summary:
-1. Retrieval fails on informal/paraphrased vocabulary (Case 1).
-2. [fill in Case 2 category]
-3. [fill in Case 3 category]
+| ID | Question | Score | Root Cause |
+|---|---|---|---|
+| q04 | Offline use without internet | 0 | **Retrieval** — TF-IDF vocabulary mismatch. The question's wording ("without an internet connection") shares no vocabulary with the answer's wording ("offline mode"), so an irrelevant chunk that shares literal words outranks the correct one. The correct chunk did not appear in the top 10 results for this query. |
+| q06 | Export formats + bulk export restriction | 1 | **Generation** — the correct chunk, containing the full answer, was retrieved and in context; the model still dropped the Pro/Team qualifier when generating a concise answer. |
+| q17 | Mid-cycle cancellation partial refund (trap) | 2 (judge) | **Judge-scoring bias** — the model's answer was factually correct but never engaged with the distractor policy (14-day money-back guarantee) the question was designed to test. The judge scored it full credit anyway, since its rubric checks final-answer correctness, not demonstrated disambiguation. |
 
-## 6. Fine-tuning result (Checkpoint 5)
-Targeted failure category: [state which one, e.g. "hallucinating answers
-to out-of-scope questions instead of declining"].
-Before/after comparison: see `finetune/before_after_comparison.json`
-(generated by `finetune/train.py` when run in Colab).
+An earlier draft of this analysis initially mis-classified q06 as a
+retrieval failure; a deeper diagnostic (printing full retrieved-chunk
+text rather than just source filenames) corrected this. That correction
+is documented in `eval/failure_analysis.md` for transparency.
+
+### 3.3 Fix and Validation (Checkpoint 5)
+
+**Fix:** A few-shot prompt (`finetune/prompt_v2.py`) targeting the q06
+failure category (generation dropping qualifiers under a brevity
+constraint). Adds an explicit instruction plus one worked example showing
+that plan-tier/limit/exception qualifiers must be preserved even in a
+short answer.
+
+**Held-out validation** (`finetune/compare_prompts.py`): to avoid
+cyclical validation (testing a fix on the same sample used to design it),
+the fix was scored against four questions *not* used during development —
+q09, q10, q12, q16 — chosen because their reference answers also contain
+a qualifier of the same shape (plan-tier restriction, timing rule, or
+scope limit) q06 needed.
+
+| Set | Baseline avg score | Improved avg score |
+|---|---|---|
+| Held-out (q09, q10, q12, q16) | 2.00 | 2.00 |
+
+Result: no regressions. All four held-out questions already scored full
+credit before the change, so this run demonstrates the fix is safe
+(doesn't break already-correct behavior) rather than demonstrating a
+score improvement on this particular set.
+
+**Direct q06 comparison** (`finetune/run_q06_demo.py`, reported
+separately from the held-out set since q06 was the diagnosed sample, not
+a validation sample): both baseline and improved prompts scored 2 on this
+run. This surfaced an important limitation — **LLM generation
+non-determinism**: the same unmodified baseline prompt, on the same
+question, scored 1 in the original Checkpoint 3 eval run (dropping the
+qualifier) and 2 on this later run (including it), with no code changes
+between the two. A single before/after sample is therefore not reliable
+evidence a fix works or doesn't; the held-out multi-question aggregate
+is the more trustworthy signal. Full detail and reasoning in
+`eval/failure_analysis.md`.
+
+## 4. Known Limitations
+
+- **LLM-as-judge bias.** The judge is itself an LLM and shares known
+  biases — leniency, and reward for answers that hit the reference's key
+  facts without checking *how* the model arrived at them. q17 is a
+  concrete example: a factually correct but reasoning-incomplete answer
+  was scored full credit. Aggregate pass-rate metrics should be read as
+  an upper bound, especially on trap/discriminative questions, not as
+  ground truth. Manual spot-checking of outlier cases remains necessary.
+- **Generation non-determinism.** Sampling variance means single-run
+  before/after comparisons on one question are weak evidence. Multi-run
+  averaging (or a larger held-out set) would give a more reliable
+  estimate of whether a prompt fix genuinely shifts behavior.
+- **Test set size.** 18 questions is enough to catch clear failures but
+  too small to produce statistically tight pass-rate estimates,
+  particularly for the 5 outlier subtypes (roughly one question per
+  subtype).
+- **Retrieval fix not implemented.** q04's root cause (TF-IDF's lack of
+  semantic matching) was diagnosed but not fixed in this task — the fix
+  (swapping to a semantic embedding model) is a larger infrastructure
+  change out of scope for a prompt-level checkpoint. It's documented as a
+  recommendation in `eval/failure_analysis.md`.
+
+## 5. Files
+
+- `eval/test_set.json` — test set (Checkpoint 1)
+- `eval/scoring.py` — LLM-as-judge (Checkpoint 2)
+- `eval/run_eval.py`, `eval/metrics.py` — eval runner and metrics
+  (Checkpoint 3)
+- `eval/results.json`, `eval/metrics.json` — raw results
+- `eval/failure_analysis.md` — root-cause analysis (Checkpoint 4)
+- `finetune/prompt_v2.py` — improved prompt (Checkpoint 5)
+- `finetune/compare_prompts.py`, `finetune/run_q06_demo.py` — before/after
+  validation scripts
+- `finetune/prompt_comparison_results.json`,
+  `finetune/q06_demonstration.json` — before/after results
