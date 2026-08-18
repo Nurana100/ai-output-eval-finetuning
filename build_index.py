@@ -20,7 +20,10 @@ INDEX_DIR = os.path.join(os.path.dirname(__file__), "index")
 
 def chunk_text(text, source, chunk_size=500, overlap=100):
     """Simple sliding-window chunker over raw characters, chunk boundaries
-    snapped to paragraph breaks where possible."""
+    snapped to paragraph breaks where possible. Consecutive chunks share
+    up to `overlap` trailing/leading characters, so a detail sitting right
+    at a chunk boundary doesn't get orphaned from the paragraph that gives
+    it context."""
     paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
     chunks = []
     buf = ""
@@ -30,7 +33,12 @@ def chunk_text(text, source, chunk_size=500, overlap=100):
         else:
             if buf:
                 chunks.append(buf)
-            buf = p
+                # seed the next chunk with the tail of this one instead of
+                # starting from a hard cut
+                tail = buf[-overlap:] if overlap > 0 else ""
+                buf = (tail + "\n\n" + p).strip()
+            else:
+                buf = p
     if buf:
         chunks.append(buf)
     return [{"text": c, "source": source} for c in chunks]

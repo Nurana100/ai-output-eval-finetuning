@@ -31,17 +31,30 @@ def _load():
 
 
 def retrieve(query, k=3):
+    """Returns up to k *distinct* chunks. Without de-duplication the same
+    chunk can occupy more than one of the k context slots (seen in
+    failure_analysis.md, q04: troubleshooting.md's top chunk was returned
+    twice), which wastes context that could have gone to a different,
+    possibly more relevant chunk."""
     _load()
     q_vec = _vectorizer.transform([query]).toarray().astype("float32")
     norm = np.linalg.norm(q_vec)
     if norm > 0:
         q_vec = q_vec / norm
-    scores, idxs = _index.search(q_vec, k)
+    # Over-fetch so there's still room to reach k after dropping duplicates.
+    scores, idxs = _index.search(q_vec, min(k * 3, len(_chunks)))
     results = []
+    seen_texts = set()
     for score, idx in zip(scores[0], idxs[0]):
         if idx == -1:
             continue
-        results.append({**_chunks[idx], "score": float(score)})
+        chunk = _chunks[idx]
+        if chunk["text"] in seen_texts:
+            continue
+        seen_texts.add(chunk["text"])
+        results.append({**chunk, "score": float(score)})
+        if len(results) == k:
+            break
     return results
 
 

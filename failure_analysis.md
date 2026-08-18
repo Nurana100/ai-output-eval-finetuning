@@ -230,3 +230,15 @@ validating a fix on the same samples used to make it. q04's retrieval fix
 (swapping TF-IDF for semantic embeddings) is documented here as a
 recommendation but is a larger infrastructure change out of scope for a
 prompt-level Checkpoint 5 fix.
+
+**Update per mentor review (8/17/2026):** the original held-out run (4
+questions, 1 trial each) produced baseline == improved on every question,
+which only demonstrates "no regression," not "measurable improvement,"
+and — per the non-determinism note above — a single sample per question
+isn't strong evidence either way. `compare_prompts.py` was revised to (a)
+expand the held-out set from 4 to 7 qualifier-bearing questions and (b)
+run each question 3 times per prompt version and average, so the
+before/after conclusion is less sensitive to one sample's random
+variance. Re-run `python compare_prompts.py` with a live `GEMINI_API_KEY`
+to regenerate `prompt_comparison_results.json` and update the numbers in
+`report.md` accordingly — the numbers above reflect the pre-revision run.

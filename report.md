@@ -80,19 +80,32 @@ short answer.
 
 **Held-out validation** (`compare_prompts.py`): to avoid
 cyclical validation (testing a fix on the same sample used to design it),
-the fix was scored against four questions *not* used during development —
-q09, q10, q12, q16 — chosen because their reference answers also contain
-a qualifier of the same shape (plan-tier restriction, timing rule, or
-scope limit) q06 needed.
+the fix was scored against questions *not* used during development —
+chosen because their reference answers also contain a qualifier of the
+same shape (plan-tier restriction, timing rule, or scope limit) q06
+needed.
+
+**Revised per mentor review (8/17/2026):** the original run used 4
+held-out questions (q09, q10, q12, q16) at 1 trial each, and both
+baseline and improved tied at 2.00 avg — which only shows "no
+regression," not "measurable improvement," and (per the non-determinism
+finding below) a single sample per question isn't strong evidence either
+way. `compare_prompts.py` now uses 7 held-out questions (q05, q09, q10,
+q11, q12, q13, q16) and averages 3 trials per question per prompt
+version.
 
 | Set | Baseline avg score | Improved avg score |
 |---|---|---|
-| Held-out (q09, q10, q12, q16) | 2.00 | 2.00 |
+| Held-out, original (q09, q10, q12, q16 — 1 trial each) | 2.00 | 2.00 |
+| Held-out, revised (7 questions x 3 trials each) | *(re-run `compare_prompts.py` and paste numbers here)* | *(re-run `compare_prompts.py` and paste numbers here)* |
 
-Result: no regressions. All four held-out questions already scored full
-credit before the change, so this run demonstrates the fix is safe
-(doesn't break already-correct behavior) rather than demonstrating a
-score improvement on this particular set.
+Original result: no regressions, but all four held-out questions already
+scored full credit before the change, so that run demonstrated the fix
+is safe rather than demonstrating a score improvement. The revised
+methodology (larger set, multi-trial averaging) is what should be used
+to decide whether the fix shows a real, measurable improvement — run it
+with a live `GEMINI_API_KEY` and record the outcome above before treating
+this checkpoint as fully validated.
 
 **Direct q06 comparison** (`run_q06_demo.py`, reported
 separately from the held-out set since q06 was the diagnosed sample, not

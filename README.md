@@ -11,7 +11,7 @@ Generation and judging use the Gemini API (free tier).
 account_management.md, features.md, pricing.md,
 privacy_security.md, troubleshooting.md   5 markdown docs the RAG agent retrieves from
 build_index.py           builds a TF-IDF + FAISS retrieval index (offline, no downloads)
-agent.py                 retrieval + Claude generation
+agent.py                 retrieval + Gemini generation
 test_set.json             18 Q&A pairs: 13 normal + 5 outliers
 scoring.py                LLM-as-judge scoring (0/1/2 rubric)
 metrics.py                pass rate / latency / cost aggregation
@@ -112,3 +112,11 @@ a manual spot-check.
 `prepare_data.py` are different questions from
 `test_set.json`, so the before/after comparison isn't validated on
 data the fine-tune already saw.
+- **Chunk overlap:** `chunk_text()` in `build_index.py` now actually uses
+its `overlap` parameter — consecutive chunks share up to `overlap`
+trailing/leading characters instead of being cut with a hard boundary
+and no shared context.
+- **De-duplicated retrieval:** `retrieve()` in `agent.py` over-fetches and
+drops duplicate chunk text before returning its top `k`, so the same
+chunk can't fill two context slots at once (this was previously wasting
+a slot — see `failure_analysis.md`, q04).
